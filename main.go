@@ -117,6 +117,11 @@ func discover() ([]Module, error) {
 	s.Suffix = " Discovering modules..."
 	s.Start()
 
+	gmenv := os.Getenv("GO111MODULE")
+	fmt.Printf("Go module: %s\n", gmenv)
+	gp := os.Getenv("GOPROXY")
+	fmt.Printf("Go proxy:  %s\n", gp)
+
 	args := []string{
 		"list",
 		"-u",
@@ -126,6 +131,8 @@ func discover() ([]Module, error) {
 		"-m",
 		"all",
 	}
+	cmdstr := "go " + strings.Join(args, " ")
+	fmt.Printf("Running command: %s\n", cmdstr)
 
 	list, err := exec.Command("go", args...).Output()
 	s.Stop()
