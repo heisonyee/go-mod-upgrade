@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime/debug"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/briandowns/spinner"
 	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
+	"golang.org/x/mod/modfile"
 )
 
 var (
@@ -112,8 +114,86 @@ func (m MultiSelect) Cleanup(config *survey.PromptConfig, val interface{}) error
 	return m.Render("", nil)
 }
 
+type appEnv struct {
+	verbose  bool
+	force    bool
+	pageSize int
+	hook     string
+}
+
+func (app *appEnv) run() error {
+	if app.verbose {
+		log.SetLevel(log.DebugLevel)
+	}
+	var paths []string
+	gw, err := exec.Command("go", "env", "GOWORK").Output()
+	if err != nil {
+		return err
+	}
+	gowork := strings.TrimSpace(string(gw))
+	if gowork == "" || gowork == "off" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		paths = append(paths, cwd)
+	} else {
+		log.WithField("gowork", gowork).Info("Workspace mode")
+		content, err := os.ReadFile(gowork)
+		if err != nil {
+			return err
+		}
+		work, err := modfile.ParseWork("go.work", content, nil)
+		if err != nil {
+			return err
+		}
+		for _, use := range work.Use {
+			if use != nil {
+				paths = append(paths, use.Path)
+			}
+		}
+	}
+
+	for _, path := range paths {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		dir := path
+		if !filepath.IsAbs(path) {
+			dir = filepath.Join(filepath.Dir(gowork), path)
+		}
+		log.WithField("dir", dir).Info("Using directory")
+		if err := os.Chdir(dir); err != nil {
+			return err
+		}
+		modules, err := discover()
+		if err != nil {
+			return err
+		}
+		if app.force {
+			log.Debug("Update all modules in non-interactive mode...")
+			update(modules, app.hook)
+			return nil
+		}
+		if len(modules) > 0 {
+			modules = choose(modules, app.pageSize)
+			update(modules, app.hook)
+		} else {
+			fmt.Println("All modules are up to date")
+		}
+		if err := os.Chdir(cwd); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func discover() ([]Module, error) {
 	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
+	if err := s.Color("yellow"); err != nil {
+		return nil, err
+	}
 	s.Suffix = " Discovering modules..."
 	s.Start()
 
@@ -125,7 +205,7 @@ func discover() ([]Module, error) {
 	args := []string{
 		"list",
 		"-u",
-		"-mod=mod",
+		"-mod=readonly",
 		"-f",
 		"'{{if (and (not (or .Main .Indirect)) .Update)}}{{.Path}}: {{.Version}} -> {{.Update.Version}}{{end}}'",
 		"-m",
@@ -134,7 +214,12 @@ func discover() ([]Module, error) {
 	cmdstr := "go " + strings.Join(args, " ")
 	fmt.Printf("Running command: %s\n", cmdstr)
 
-	list, err := exec.Command("go", args...).Output()
+	cmd := exec.Command("go", args...)
+	cmd.Env = os.Environ()
+	// Disable Go workspace mode, otherwise this can cause trouble
+	// See issue https://github.com/oligot/go-mod-upgrade/issues/35
+	cmd.Env = append(cmd.Env, "GOWORK=off")
+	list, err := cmd.Output()
 	s.Stop()
 
 	// Clear line
@@ -219,7 +304,7 @@ func choose(modules []Module, pageSize int) []Module {
 func update(modules []Module, hook string) {
 	for _, x := range modules {
 		fmt.Fprintf(color.Output, "Updating %s to version %s...\n", formatName(x, len(x.name)), formatTo(x))
-		out, err := exec.Command("go", "get", x.name).CombinedOutput()
+		out, err := exec.Command("go", "get", "-d", x.name).CombinedOutput()
 		if err != nil {
 			log.WithFields(log.Fields{
 				"error": err,
@@ -265,10 +350,7 @@ func versionPrinter(c *cli.Context) {
 
 func main() {
 	var (
-		verbose  bool
-		force    bool
-		pageSize int
-		hook     string
+		app = &appEnv{}
 	)
 
 	log.SetHandler(logcli.Default)
@@ -279,7 +361,7 @@ func main() {
 	}
 	cli.VersionPrinter = versionPrinter
 
-	app := &cli.App{
+	cliapp := &cli.App{
 		Name:    "go-mod-upgrade",
 		Usage:   "Update outdated Go dependencies interactively",
 		Version: version,
@@ -289,54 +371,36 @@ func main() {
 				Aliases:     []string{"p"},
 				Value:       10,
 				Usage:       "Specify page size",
-				Destination: &pageSize,
+				Destination: &app.pageSize,
 			},
 			&cli.BoolFlag{
 				Name:        "force",
 				Aliases:     []string{"f"},
 				Value:       false,
 				Usage:       "Force update all modules in non-interactive mode",
-				Destination: &force,
+				Destination: &app.force,
 			},
 			&cli.BoolFlag{
 				Name:        "verbose",
 				Aliases:     []string{"v"},
 				Value:       false,
 				Usage:       "Verbose mode",
-				Destination: &verbose,
+				Destination: &app.verbose,
 			},
 			&cli.PathFlag{
 				Name:        "hook",
 				Usage:       "Hook to execute for each updated module",
-				Destination: &hook,
+				Destination: &app.hook,
 			},
 		},
 		Action: func(c *cli.Context) error {
-			if verbose {
-				log.SetLevel(log.DebugLevel)
-			}
-			modules, err := discover()
-			if err != nil {
-				return err
-			}
-			if force {
-				log.Debug("Update all modules in non-interactive mode...")
-				update(modules, hook)
-				return nil
-			}
-			if len(modules) > 0 {
-				modules = choose(modules, pageSize)
-				update(modules, hook)
-			} else {
-				fmt.Println("All modules are up to date")
-			}
-			return nil
+			return app.run()
 		},
 		UseShortOptionHandling: true,
 		EnableBashCompletion:   true,
 	}
 
-	err := app.Run(os.Args)
+	err := cliapp.Run(os.Args)
 	if err != nil {
 		logger := log.WithError(err)
 		var e *exec.ExitError
