@@ -202,17 +202,24 @@ func discover() ([]Module, error) {
 	gp := os.Getenv("GOPROXY")
 	fmt.Printf("Go proxy:  %s\n", gp)
 
+	modArg := "-mod=mode"
+	// ReadOnly
+	ro := os.Getenv("READONLY")
+	if "1" == ro {
+		modArg = "-mod=readonly"
+	}
+
 	args := []string{
 		"list",
 		"-u",
-		"-mod=readonly",
+		modArg,
 		"-f",
 		"'{{if (and (not (or .Main .Indirect)) .Update)}}{{.Path}}: {{.Version}} -> {{.Update.Version}}{{end}}'",
 		"-m",
 		"all",
 	}
 	cmdstr := "go " + strings.Join(args, " ")
-	fmt.Printf("Running command: %s\n", cmdstr)
+	log.WithField("args", cmdstr).Info("Go Args")
 
 	cmd := exec.Command("go", args...)
 	cmd.Env = os.Environ()
