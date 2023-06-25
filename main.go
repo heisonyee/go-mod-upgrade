@@ -197,11 +197,6 @@ func discover() ([]Module, error) {
 	s.Suffix = " Discovering modules..."
 	s.Start()
 
-	gmenv := os.Getenv("GO111MODULE")
-	fmt.Printf("Go module: %s\n", gmenv)
-	gp := os.Getenv("GOPROXY")
-	fmt.Printf("Go proxy:  %s\n", gp)
-
 	modArg := "-mod=mod"
 	// ReadOnly
 	ro := os.Getenv("READONLY")
@@ -211,6 +206,7 @@ func discover() ([]Module, error) {
 
 	args := []string{
 		"list",
+		"-v",
 		"-u",
 		modArg,
 		"-f",
@@ -219,7 +215,7 @@ func discover() ([]Module, error) {
 		"all",
 	}
 	cmdstr := "go " + strings.Join(args, " ")
-	log.WithField("args", cmdstr).Info("Go Args")
+	log.WithField("go args", cmdstr).Info("Using go Args")
 
 	cmd := exec.Command("go", args...)
 	cmd.Env = os.Environ()
