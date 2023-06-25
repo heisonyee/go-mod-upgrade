@@ -202,7 +202,7 @@ func discover() ([]Module, error) {
 	gp := os.Getenv("GOPROXY")
 	fmt.Printf("Go proxy:  %s\n", gp)
 
-	modArg := "-mod=mode"
+	modArg := "-mod=mod"
 	// ReadOnly
 	ro := os.Getenv("READONLY")
 	if "1" == ro {
