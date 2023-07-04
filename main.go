@@ -215,7 +215,7 @@ func discover() ([]Module, error) {
 		"all",
 	}
 	cmdstr := "go " + strings.Join(args, " ")
-	log.WithField("go args", cmdstr).Info("Using go Args")
+	log.WithField("go args", cmdstr).Info("Using go args")
 
 	cmd := exec.Command("go", args...)
 	cmd.Env = os.Environ()
